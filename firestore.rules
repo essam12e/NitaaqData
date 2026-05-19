@@ -1,0 +1,90 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function organizationId() {
+      return userDoc().data.organizationId;
+    }
+
+    function role() {
+      return userDoc().data.role;
+    }
+
+    function activeUser() {
+      return signedIn() && userDoc().data.active == true;
+    }
+
+    function sameOrg(data) {
+      return activeUser() && data.organizationId == organizationId();
+    }
+
+    function canManageClients() {
+      return role() in ['admin', 'manager'];
+    }
+
+    function canWriteOwnClient(data) {
+      return role() == 'employee' && data.addedBy == request.auth.uid;
+    }
+
+    match /users/{userId} {
+      allow read: if activeUser() && (resource.data.organizationId == organizationId() || userId == request.auth.uid);
+      allow create: if signedIn() && request.auth.uid == userId;
+      allow update, delete: if activeUser() && role() == 'admin' && resource.data.organizationId == organizationId();
+    }
+
+    match /organizations/{orgId} {
+      allow read: if activeUser() && orgId == organizationId();
+      allow write: if activeUser() && role() == 'admin' && orgId == organizationId();
+    }
+
+    match /clients/{clientId} {
+      allow read: if sameOrg(resource.data);
+      allow create: if sameOrg(request.resource.data) && (canManageClients() || canWriteOwnClient(request.resource.data));
+      allow update: if sameOrg(resource.data) && sameOrg(request.resource.data) && (canManageClients() || canWriteOwnClient(resource.data));
+      allow delete: if sameOrg(resource.data) && role() in ['admin', 'manager'];
+    }
+
+    match /subscriptions/{id} {
+      allow read: if sameOrg(resource.data);
+      allow write: if sameOrg(request.resource.data) && role() in ['admin', 'manager'];
+    }
+
+    match /invoices/{id} {
+      allow read: if sameOrg(resource.data);
+      allow create, update: if sameOrg(request.resource.data) && role() in ['admin', 'manager', 'employee'];
+      allow delete: if sameOrg(resource.data) && role() in ['admin', 'manager'];
+    }
+
+    match /renewals/{id} {
+      allow read: if sameOrg(resource.data);
+      allow create, update: if sameOrg(request.resource.data) && role() in ['admin', 'manager', 'employee'];
+      allow delete: if sameOrg(resource.data) && role() in ['admin', 'manager'];
+    }
+
+    match /activationCodes/{codeId} {
+      allow read: if activeUser() && role() == 'admin';
+      allow create, update: if activeUser() && role() == 'admin';
+      allow delete: if false;
+    }
+
+    match /settings/{orgId} {
+      allow read: if activeUser() && orgId == organizationId();
+      allow write: if activeUser() && role() == 'admin' && orgId == organizationId();
+    }
+
+    match /activityLogs/{id} {
+      allow read: if sameOrg(resource.data);
+      allow create: if sameOrg(request.resource.data);
+      allow update, delete: if false;
+    }
+  }
+}
+
